@@ -107,21 +107,22 @@ def test_data_df():
 
 
 def sample_of_rc(amount=100):
-    """Yields random sample of RC from test data"""
+    """Return a random sample of RC from test data."""
     test_data = get_test_data_df(TEST_RECORDS)
     dcs = test_data.MISTO_ODBERU.unique()
     shuffle(dcs)
     dcs = cycle(dcs)
 
-    for _ in range(amount):
-        dc = next(dcs)
-        yield sample(list(test_data[test_data.MISTO_ODBERU == dc].RC.unique()), 1)[0]
+    return [
+        sample(list(test_data[test_data.MISTO_ODBERU == next(dcs)].RC.unique()), 1)[0]
+        for _ in range(amount)
+    ]
 
 
 def new_rc_if_ignored(rodne_cislo):
     while True:
         if _db.session.get(IgnoredDonors, rodne_cislo):
-            rodne_cislo = next(sample_of_rc(1))
+            rodne_cislo = sample_of_rc(1)[0]
             continue
         return rodne_cislo
 

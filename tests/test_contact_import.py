@@ -795,7 +795,7 @@ just-email@test.cz"""
         """Test that valid lines are cleaned up to show only RC, email, and phone."""
         login(user, testapp)
 
-        rc = next(sample_of_rc(1))
+        rc = sample_of_rc(1)[0]
         rc = new_rc_if_ignored(rc)
 
         # Submit data with extra text in valid line
