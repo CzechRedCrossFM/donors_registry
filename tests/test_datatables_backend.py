@@ -109,7 +109,7 @@ class TestDataTablesBackend:
 
     def test_json_backend_note_structure(self, user, testapp):
         """Test that note data is properly structured with emails, phones, and other text."""
-        rodne_cislo = next(sample_of_rc(1))
+        rodne_cislo = sample_of_rc(1)[0]
         rodne_cislo = new_rc_if_ignored(rodne_cislo)
         delete_note_if_exists(rodne_cislo)
 
