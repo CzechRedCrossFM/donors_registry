@@ -75,6 +75,7 @@ def get_list_of_images(folder):
     with cd(Path(__file__).parent / "static"):
         for f in glob(f"{folder}/*.png"):
             result.append(url_for("static", filename=f))
+
     return result
 
 
@@ -247,7 +248,7 @@ def donor_as_row(donor):
     return result
 
 
-def send_email_with_award_doc(to, award_doc_content, medal, config) -> bool:
+def send_email_with_award_doc(to, award_doc_content, medal, config):
     msg = EmailMessage()
     msg["From"] = config["EMAIL_SENDER"]
     msg["To"] = to
@@ -285,18 +286,11 @@ def send_email_with_award_doc(to, award_doc_content, medal, config) -> bool:
         subtype="pdf",
         filename="Potvrzení o udělení medaile.pdf",
     )
-    try:
-        with smtplib.SMTP(
-            config["SMTP_SERVER"], config["SMTP_PORT"], timeout=20
-        ) as server:
-            server.starttls()
-            server.login(config["SMTP_LOGIN"], config["SMTP_PASSWORD"])
-            server.send_message(msg)
-    # socket.gaierror -> socket.error -> OSerror -> Eception
-    except OSError as e:
-        flash(f"OSError - {e}", "danger")
-        return False
-    return True
+
+    with smtplib.SMTP(config["SMTP_SERVER"], config["SMTP_PORT"], timeout=20) as server:
+        server.starttls()
+        server.login(config["SMTP_LOGIN"], config["SMTP_PASSWORD"])
+        server.send_message(msg)
 
 
 def get_empty_str_if_none(dictionary, key):

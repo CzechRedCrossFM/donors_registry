@@ -1,4 +1,5 @@
 import re
+import smtplib
 from datetime import datetime, timedelta
 from math import ceil
 from tempfile import NamedTemporaryFile
@@ -357,6 +358,35 @@ class TestAwardDocument:
                     assert "se uskuteční na podzim v Třinci a Frýdku-Místku" in content
                 elif medal.slug in ("kr2", "kr1", "plk"):
                     assert "Pozvánku na slavnostní oceňování obdržíte" in content
+
+    def test_email_award_document_smtp_error(self, user, testapp, mock_smtp):
+        rodne_cislo = new_rc_if_ignored(next(sample_of_rc(1)))
+        if not AwardedMedals.query.filter_by(rodne_cislo=rodne_cislo).first():
+            db.session.add(
+                AwardedMedals(
+                    rodne_cislo=rodne_cislo,
+                    medal_id=1,
+                    awarded_at=datetime.now() - timedelta(weeks=1),
+                )
+            )
+            db.session.commit()
+            DonorsOverview.refresh_overview()
+        awarded = AwardedMedals.query.filter_by(rodne_cislo=rodne_cislo).first()
+        medal = db.session.get(Medals, awarded.medal_id)
+        mock_smtp.__enter__.return_value.login.side_effect = (
+            smtplib.SMTPAuthenticationError(535, b"bad")
+        )
+        login(user, testapp)
+        res = testapp.get(url_for("donor.detail", rc=rodne_cislo))
+        form = res.forms["noteForm"]
+        form.fields["note"][0].value = "foo@bar.baz"
+        res = form.submit().follow()
+        res = res.click(
+            description="📧", href=f"/email_award_document/{medal.slug}"
+        ).follow()
+        assert "E-mail nebyl odeslán" in res
+        assert "E-mail odeslán." not in res
+        mock_smtp.__enter__.return_value.send_message.assert_not_called()
 
 
 class TestConfirmationdDocument:

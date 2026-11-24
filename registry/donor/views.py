@@ -260,12 +260,19 @@ def email_award_document(rc, medal_slug):
     css = CSS(url=url_for("static", filename="css/award_document.css", _external=True))
     pdf_content = HTML(string=award_document_html).write_pdf(stylesheets=[css])
 
-    if send_email_with_award_doc(
-        to=emails, award_doc_content=pdf_content, medal=medal, config=current_app.config
-    ):
-        flash("E-mail odeslán.", "success")
+    try:
+        send_email_with_award_doc(
+            to=emails,
+            award_doc_content=pdf_content,
+            medal=medal,
+            config=current_app.config,
+        )
+    # smtplib.SMTPException and socket errors are subclasses of OSError
+    except OSError as e:
+        current_app.logger.exception("Sending of award document e-mail failed")
+        flash(f"E-mail nebyl odeslán: {e}", "danger")
     else:
-        flash("E-mail nebyl odeslán.", "danger")
+        flash("E-mail odeslán.", "success")
     return redirect(url_for("donor.detail", rc=rc))
 
 
