@@ -2,6 +2,7 @@
 
 import re
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from flask import url_for
@@ -630,7 +631,7 @@ class TestFileUpload:
         upload_form = res.forms[1]  # File upload form
         upload_form["contact_file"] = (
             "contacts_import_valid.txt",
-            open("tests/data/contacts_import_valid.txt", "rb").read(),
+            Path("tests/data/contacts_import_valid.txt").read_bytes(),
         )
         res = upload_form.submit()
 
@@ -652,7 +653,7 @@ class TestFileUpload:
         upload_form = res.forms[1]
         upload_form["contact_file"] = (
             "contacts_import_valid.csv",
-            open("tests/data/contacts_import_valid.csv", "rb").read(),
+            Path("tests/data/contacts_import_valid.csv").read_bytes(),
         )
         res = upload_form.submit()
 
@@ -670,7 +671,7 @@ class TestFileUpload:
         upload_form = res.forms[1]
         upload_form["contact_file"] = (
             "contacts_import_valid.xlsx",
-            open("tests/data/contacts_import_valid.xlsx", "rb").read(),
+            Path("tests/data/contacts_import_valid.xlsx").read_bytes(),
         )
         res = upload_form.submit()
 
