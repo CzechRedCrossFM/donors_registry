@@ -3,7 +3,7 @@ from wtforms import HiddenField, SelectField, TextAreaField
 
 from registry.donor.models import Batch, DonationCenter
 from registry.extensions import db
-from registry.utils import DataRequired
+from registry.utils import DataRequired, database_id
 
 from .utils import validate_contact_import_data, validate_import_data
 
@@ -86,7 +86,8 @@ class DeleteBatchForm(FlaskForm):
     batch_id = HiddenField(validators=[DataRequired()])
 
     def validate(self, **kwargs):
-        self.batch = db.session.get(Batch, self.batch_id.data)
+        batch_id = database_id(self.batch_id.data)
+        self.batch = db.session.get(Batch, batch_id) if batch_id is not None else None
         return self.batch is not None
 
 

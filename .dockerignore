@@ -1,0 +1,17 @@
+**/.env*
+**/*.sqlite*
+**/*.db
+**/*.sql
+!migrations/versions/0001_schema.sql
+**/__pycache__
+.git
+.claude
+.tox
+.venv
+.pytest_cache
+tests
+tools
+instance
+infra
+registry/static/stamps/*.png
+registry/static/signatures/*.png

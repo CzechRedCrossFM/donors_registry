@@ -1,0 +1,86 @@
+{
+  "donation_centers": [
+    {
+      "id": 1,
+      "slug": "fm",
+      "title": "Nemocnice F-M",
+      "import_increments": false
+    },
+    {
+      "id": 2,
+      "slug": "fm_bubenik",
+      "title": "Krevní centrum",
+      "import_increments": false
+    },
+    {
+      "id": 3,
+      "slug": "trinec",
+      "title": "Třinec",
+      "import_increments": false
+    },
+    {
+      "id": 4,
+      "slug": "mp",
+      "title": "Moje Plazma",
+      "import_increments": true
+    }
+  ],
+  "medals": [
+    {
+      "id": 1,
+      "slug": "br",
+      "title": "Bronzová medaile",
+      "minimum_donations": 10,
+      "title_acc": "bronzovou medaili Prof. MUDr. Jana Janského",
+      "title_instr": "bronzovou medailí Prof. MUDr. Jana Janského"
+    },
+    {
+      "id": 2,
+      "slug": "st",
+      "title": "Stříbrná medaile",
+      "minimum_donations": 20,
+      "title_acc": "stříbrnou medaili Prof. MUDr. Jana Janského",
+      "title_instr": "stříbrnou medailí Prof. MUDr. Jana Janského"
+    },
+    {
+      "id": 3,
+      "slug": "zl",
+      "title": "Zlatá medaile",
+      "minimum_donations": 40,
+      "title_acc": "zlatou medaili Prof. MUDr. Jana Janského",
+      "title_instr": "zlatou medailí Prof. MUDr. Jana Janského"
+    },
+    {
+      "id": 4,
+      "slug": "kr3",
+      "title": "Zlatý kříž 3. třídy",
+      "minimum_donations": 80,
+      "title_acc": "zlatý kříž ČČK 3. třídy",
+      "title_instr": "zlatým křížem ČČK 3. třídy"
+    },
+    {
+      "id": 5,
+      "slug": "kr2",
+      "title": "Zlatý kříž 2. třídy",
+      "minimum_donations": 120,
+      "title_acc": "zlatý kříž ČČK 2. třídy",
+      "title_instr": "zlatým křížem ČČK 2. třídy"
+    },
+    {
+      "id": 6,
+      "slug": "kr1",
+      "title": "Zlatý kříž 1. třídy",
+      "minimum_donations": 160,
+      "title_acc": "zlatý kříž ČČK 1. třídy",
+      "title_instr": "zlatým křížem ČČK 1. třídy"
+    },
+    {
+      "id": 7,
+      "slug": "plk",
+      "title": "Plaketa ČČK",
+      "minimum_donations": 250,
+      "title_acc": "plaketu ČČK Dar krve - dar života",
+      "title_instr": "plaketou ČČK Dar krve - dar života"
+    }
+  ]
+}

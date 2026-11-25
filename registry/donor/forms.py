@@ -16,7 +16,7 @@ from registry.donor.models import (
     Medals,
 )
 from registry.extensions import db
-from registry.utils import DataRequired, NumericValidator
+from registry.utils import DataRequired, NumericValidator, database_id
 
 
 class RemoveMedalForm(FlaskForm):
@@ -24,8 +24,11 @@ class RemoveMedalForm(FlaskForm):
     medal_id = HiddenField(validators=[DataRequired()])
 
     def validate(self, **kwargs):
-        self.awarded_medal = db.session.get(
-            AwardedMedals, (self.rodne_cislo.data, self.medal_id.data)
+        medal_id = database_id(self.medal_id.data)
+        self.awarded_medal = (
+            db.session.get(AwardedMedals, (self.rodne_cislo.data, medal_id))
+            if medal_id is not None
+            else None
         )
         return self.awarded_medal is not None
 
@@ -48,7 +51,8 @@ class AwardMedalForm(FlaskForm):
         setattr(self, "rodne_cislo_" + rodne_cislo, rodne_cislo_input)
 
     def validate(self, **kwargs):
-        self.medal = db.session.get(Medals, self.medal_id.data)
+        medal_id = database_id(self.medal_id.data)
+        self.medal = db.session.get(Medals, medal_id) if medal_id is not None else None
 
         if self.medal is None:
             flash("Odeslána nevalidní data.", "danger")
@@ -117,7 +121,8 @@ class PrintEnvelopeLabelsForm(FlaskForm):
     skip = IntegerField(validators=[DataRequired()])
 
     def validate(self, **kwargs):
-        self.medal = db.session.get(Medals, self.medal_id.data)
+        medal_id = database_id(self.medal_id.data)
+        self.medal = db.session.get(Medals, medal_id) if medal_id is not None else None
 
         if self.medal is None:
             flash("Odeslána nevalidní data.", "danger")

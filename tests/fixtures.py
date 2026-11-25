@@ -2,21 +2,24 @@
 """Defines fixtures available to all tests."""
 
 import logging
+import os
 from itertools import cycle
-from pathlib import Path
 from random import sample, shuffle
-from shutil import copy
 from tempfile import NamedTemporaryFile
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
-from flask_migrate import Migrate, upgrade
+from flask_migrate import upgrade
 from pytest import fixture
+from sqlalchemy import create_engine, select
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from webtest import TestApp
 
 from registry.app import create_app
 from registry.donor.models import DonorsOverview, IgnoredDonors, Note
 from registry.extensions import db as _db
+from registry.list.seed import seed_reference_data
 from registry.user.models import User
 
 from .utils import (
@@ -29,58 +32,80 @@ from .utils import (
 )
 
 TEST_RECORDS = 1000  # Number of test imports to use in test database
-BACKUP_DB_PATH = Path("instance") / "backup.sqlite"
-TEST_DB_PATH = Path("instance") / "test.sqlite"
 
 
 @fixture(scope="session")
 def app():
-    """Create application for the tests."""
-    _app = create_app("tests.settings")
-    _app.logger.setLevel(logging.CRITICAL)
-    ctx = _app.test_request_context()
-    ctx.push()
+    """Create and destroy only this run's random database on a disposable server."""
+    from tests import settings
 
-    yield _app
-
-    ctx.pop()
-
-
-@fixture
-def testapp(app):
-    """Create Webtest app."""
-    return TestApp(app)
-
-
-@fixture(scope="function", autouse=True)
-def db(app):
-    """Create database for the tests."""
-    _db.app = app
-
-    # If the backup db exists, use it
-    # if not, create it from scratch and save it for other tests
-    if BACKUP_DB_PATH.is_file():
-        copy(BACKUP_DB_PATH, TEST_DB_PATH)
-    else:
-        with app.app_context():
-            migrate = Migrate()
-            migrate.init_app(app, _db)
-            upgrade()
-
+    url = make_url(os.environ["DONORS_TEST_SERVER_URL"])
+    if url.drivername != "mssql+pyodbc" or url.database != "master":
+        raise ValueError(
+            "DONORS_TEST_SERVER_URL must target a disposable MSSQL master database"
+        )
+    name = "donors_test_" + uuid4().hex
+    server = create_engine(url, isolation_level="AUTOCOMMIT")
+    with server.connect() as connection:
+        connection.exec_driver_sql(
+            f"CREATE DATABASE [{name}] COLLATE Czech_100_CI_AS_SC_UTF8"
+        )
+        connection.exec_driver_sql(
+            f"ALTER DATABASE [{name}] SET ALLOW_SNAPSHOT_ISOLATION ON"
+        )
+    settings.SQLALCHEMY_DATABASE_URI = url.set(database=name)
+    application = create_app(settings)
+    application.logger.setLevel(logging.CRITICAL)
+    context = application.test_request_context()
+    context.push()
+    try:
+        upgrade()
+        seed_reference_data()
         test_data_records(_db, limit=TEST_RECORDS)
         test_data_medals(_db)
         test_data_overrides(_db)
         test_data_ignored(_db, limit=3)
         test_data_notes(_db)
-
         DonorsOverview.refresh_overview()
+        with _db.engine.connect() as connection:
+            application.config["TEST_BASELINE"] = {
+                table.name: [
+                    dict(row) for row in connection.execute(select(table)).mappings()
+                ]
+                for table in _db.metadata.sorted_tables
+            }
+        yield application
+    finally:
+        _db.session.remove()
+        _db.engine.dispose()
+        context.pop()
+        with server.connect() as connection:
+            connection.exec_driver_sql(
+                f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE"
+            )
+            connection.exec_driver_sql(f"DROP DATABASE [{name}]")
+        server.dispose()
 
-        copy(TEST_DB_PATH, BACKUP_DB_PATH)
 
+@fixture
+def testapp(app):
+    return TestApp(app)
+
+
+@fixture(autouse=True)
+def db(app):
+    """Reset synthetic data while allowing real commits and backup connections."""
+    _db.session.remove()
+    with _db.engine.begin() as connection:
+        for table in reversed(_db.metadata.sorted_tables):
+            connection.execute(table.delete())
+        for table in _db.metadata.sorted_tables:
+            rows = app.config["TEST_BASELINE"][table.name]
+            chunk = max(1, 2000 // len(table.columns))
+            for start in range(0, len(rows), chunk):
+                connection.execute(table.insert(), rows[start : start + chunk])
     yield _db
-
-    # Explicitly close DB connection
-    _db.session.close()
+    _db.session.remove()
 
 
 @fixture(scope="function")

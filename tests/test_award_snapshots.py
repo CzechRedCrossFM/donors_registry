@@ -223,7 +223,7 @@ class TestAwardEligibilitySnapshot:
 
         # Find a donor who already has kr3 medal
         do = DonorsOverview.query.filter(
-            DonorsOverview.awarded_medal_kr3.is_(True)
+            DonorsOverview.awarded_medal_kr3 == db.true()
         ).first()
 
         if do is None:

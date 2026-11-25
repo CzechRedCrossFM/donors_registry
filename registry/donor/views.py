@@ -19,9 +19,10 @@ from flask_login import login_required
 from flask_weasyprint import CSS, HTML
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
-from sqlalchemy import and_, collate, extract
+from sqlalchemy import and_, extract
 from werkzeug.wrappers import Response
 
+from registry.database import czech_order
 from registry.extensions import db
 from registry.list.models import DonationCenter, Medals
 from registry.utils import (
@@ -81,11 +82,17 @@ def get_eligible_donors_for_medal(medal):
         return (
             DonorsOverview.query.filter(
                 and_(
-                    DonorsOverview.rodne_cislo.in_(eligible_rodne_cisla),
-                    getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(False),
+                    DonorsOverview.rodne_cislo.in_(
+                        db.select(AwardEligibilitySnapshot.rodne_cislo).where(
+                            AwardEligibilitySnapshot.medal_id == medal.id,
+                            AwardEligibilitySnapshot.year == current_year,
+                        )
+                    ),
+                    getattr(DonorsOverview, "awarded_medal_" + medal.slug)
+                    == db.false(),
                 )
             )
-            .order_by(collate(DonorsOverview.last_name, "czech"))
+            .order_by(czech_order(DonorsOverview.last_name))
             .all()
         )
     else:
@@ -94,10 +101,11 @@ def get_eligible_donors_for_medal(medal):
             DonorsOverview.query.filter(
                 and_(
                     DonorsOverview.donation_count_total >= medal.minimum_donations,
-                    getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(False),
+                    getattr(DonorsOverview, "awarded_medal_" + medal.slug)
+                    == db.false(),
                 )
             )
-            .order_by(collate(DonorsOverview.last_name, "czech"))
+            .order_by(czech_order(DonorsOverview.last_name))
             .all()
         )
 
@@ -142,14 +150,13 @@ def overview_data(year=None, medal_slug=None):
     if year is not None:
         year = year if year else None
         medal = Medals.query.filter(Medals.slug == medal_slug).first()
-        awarded_medals = AwardedMedals.query.filter(
+        awarded_medals = db.select(AwardedMedals.rodne_cislo).where(
             and_(
                 extract("year", AwardedMedals.awarded_at) == year,
                 AwardedMedals.medal_id == medal.id,
             ),
-        ).all()
-        rodna_cisla = [am.rodne_cislo for am in awarded_medals]
-        filter_ = DonorsOverview.rodne_cislo.in_(rodna_cisla)
+        )
+        filter_ = DonorsOverview.rodne_cislo.in_(awarded_medals)
     all_records_count = DonorsOverview.query.filter(filter_).count()
 
     # WHERE part
@@ -452,7 +459,8 @@ def award_prep(medal_slug):
             donors = DonorsOverview.query.filter(
                 and_(
                     DonorsOverview.donation_count_total >= medal.minimum_donations,
-                    getattr(DonorsOverview, "awarded_medal_" + medal_slug).is_(False),
+                    getattr(DonorsOverview, "awarded_medal_" + medal_slug)
+                    == db.false(),
                 )
             ).all()
             snapshot_info = {"exists": False, "year": current_year}
@@ -461,10 +469,14 @@ def award_prep(medal_slug):
             if eligible_rodne_cisla:
                 donors = DonorsOverview.query.filter(
                     and_(
-                        DonorsOverview.rodne_cislo.in_(eligible_rodne_cisla),
-                        getattr(DonorsOverview, "awarded_medal_" + medal_slug).is_(
-                            False
+                        DonorsOverview.rodne_cislo.in_(
+                            db.select(AwardEligibilitySnapshot.rodne_cislo).where(
+                                AwardEligibilitySnapshot.medal_id == medal.id,
+                                AwardEligibilitySnapshot.year == current_year,
+                            )
                         ),
+                        getattr(DonorsOverview, "awarded_medal_" + medal_slug)
+                        == db.false(),
                     )
                 ).all()
             else:
@@ -490,7 +502,7 @@ def award_prep(medal_slug):
         donors = DonorsOverview.query.filter(
             and_(
                 DonorsOverview.donation_count_total >= medal.minimum_donations,
-                getattr(DonorsOverview, "awarded_medal_" + medal_slug).is_(False),
+                getattr(DonorsOverview, "awarded_medal_" + medal_slug) == db.false(),
             )
         ).all()
 

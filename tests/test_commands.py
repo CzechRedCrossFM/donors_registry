@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 from registry.commands import (
     create_user,
     import_emails,
@@ -17,6 +20,34 @@ from registry.user.models import User
 
 
 class TestCommands:
+    def test_application_starts_without_test_package(self):
+        script = """
+import sys
+from types import SimpleNamespace
+
+class NoTests:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "tests" or fullname.startswith("tests."):
+            raise ModuleNotFoundError("Tests are not shipped in production", name=fullname)
+
+sys.meta_path.insert(0, NoTests())
+from registry.app import create_app
+app = create_app(SimpleNamespace(
+    SECRET_KEY="startup-check",
+    SQLALCHEMY_DATABASE_URI="mssql+pyodbc://example.invalid/donors?driver=ODBC+Driver+18+for+SQL+Server",
+))
+assert app.test_client().get("/healthz").status_code == 200
+"""
+        subprocess.run([sys.executable, "-c", script], check=True)
+
+    def test_initialize_reference_lists_is_idempotent(self, app):
+        from registry.list.models import DonationCenter, Medals
+
+        before = (DonationCenter.query.count(), Medals.query.count())
+        result = app.test_cli_runner().invoke(args=["init-reference-data"])
+        assert result.exit_code == 0, result.output
+        assert (DonationCenter.query.count(), Medals.query.count()) == before == (4, 7)
+
     def test_add_user(self, app):
         email = "test_user_1@example.com"
         runner = app.test_cli_runner()

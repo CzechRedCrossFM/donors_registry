@@ -3,11 +3,12 @@
 
 See: http://webtest.readthedocs.org/
 """
+
 import pytest
 from flask import url_for
 from sqlalchemy.exc import IntegrityError
 
-from registry.donor.models import Batch, Record
+from registry.donor.models import Record
 
 from .helpers import login
 
@@ -168,14 +169,8 @@ class TestHomePage:
 
 class TestDatabase:
     def test_foreign_key_check(self, db):
-        """
-        Test that foreign keys works as expected.
-        This is mainly needed for SQLite where foreing keys are not checked by default
-        """
         record = db.session.get(Record, 1)
-        batch = db.session.get(Batch, record.batch_id)
-        # Deleting a batch with associated record should not be possible
-        db.session.delete(batch)
+        record.batch_id = -1
         with pytest.raises(IntegrityError):
             db.session.commit()
         db.session.rollback()

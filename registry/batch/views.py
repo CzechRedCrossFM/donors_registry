@@ -2,7 +2,15 @@ from datetime import datetime
 from difflib import get_close_matches
 from io import StringIO
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    abort,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user, login_required
 from openpyxl import load_workbook
 from werkzeug.datastructures import Headers
@@ -18,6 +26,7 @@ from registry.donor.models import (
 from registry.extensions import db
 from registry.list.models import DonationCenter
 from registry.utils import (
+    database_id,
     flash_errors,
     get_empty_str_if_none,
     record_as_input_data,
@@ -139,6 +148,9 @@ def delete_batch():
 @blueprint.get("/batch_detail/<id>")
 @login_required
 def batch_detail(id):
+    id = database_id(id)
+    if id is None:
+        abort(404)
     batch = db.get_or_404(Batch, id)
     records = Record.query.filter(Record.batch_id == batch.id)
     delete_batch_form = DeleteBatchForm()

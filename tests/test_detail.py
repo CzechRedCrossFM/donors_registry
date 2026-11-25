@@ -311,18 +311,12 @@ class TestAwardDocument:
     ):
         rodne_cislo = new_rc_if_ignored(rodne_cislo)
         medal = db.session.get(Medals, medal_id)
-        # Make sure at least some medals are already awarded
-        awarded_medals = (
-            AwardedMedals.query.filter(AwardedMedals.rodne_cislo == rodne_cislo)
-            .order_by(AwardedMedals.medal_id.asc())
-            .all()
-        )
-        if len(awarded_medals) == 0 and medal_id % 2 == 0:
-            am = AwardedMedals(
-                rodne_cislo=rodne_cislo,
-                medal_id=medal_id,
-                awarded_at=datetime.now() - timedelta(weeks=1),
-            )
+        # Exercise known award dates independently of the random donor's history.
+        if medal_id % 2 == 0:
+            am = db.session.get(AwardedMedals, (rodne_cislo, medal_id))
+            if am is None:
+                am = AwardedMedals(rodne_cislo=rodne_cislo, medal_id=medal_id)
+            am.awarded_at = datetime.now() - timedelta(weeks=1)
             db.session.add(am)
             db.session.commit()
             DonorsOverview.refresh_overview()
@@ -434,7 +428,7 @@ class TestEnvelopeLabels:
         eligible_donors = DonorsOverview.query.filter(
             and_(
                 DonorsOverview.donation_count_total >= medal.minimum_donations,
-                getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(False),
+                getattr(DonorsOverview, "awarded_medal_" + medal.slug) == db.false(),
             )
         ).count()
 
@@ -452,7 +446,7 @@ class TestEnvelopeLabels:
         eligible_donors = DonorsOverview.query.filter(
             and_(
                 DonorsOverview.donation_count_total >= medal.minimum_donations,
-                getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(False),
+                getattr(DonorsOverview, "awarded_medal_" + medal.slug) == db.false(),
             )
         ).all()
 
@@ -478,7 +472,7 @@ class TestEnvelopeLabels:
         eligible_donors = DonorsOverview.query.filter(
             and_(
                 DonorsOverview.donation_count_total >= medal.minimum_donations,
-                getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(False),
+                getattr(DonorsOverview, "awarded_medal_" + medal.slug) == db.false(),
             )
         ).count()
 
@@ -513,7 +507,7 @@ class TestEnvelopeLabels:
         eligible_donors = DonorsOverview.query.filter(
             and_(
                 DonorsOverview.donation_count_total >= medal.minimum_donations,
-                getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(False),
+                getattr(DonorsOverview, "awarded_medal_" + medal.slug) == db.false(),
             )
         ).count()
 
@@ -547,7 +541,7 @@ class TestEnvelopeLabels:
         eligible_donors = DonorsOverview.query.filter(
             and_(
                 DonorsOverview.donation_count_total >= medal.minimum_donations,
-                getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(False),
+                getattr(DonorsOverview, "awarded_medal_" + medal.slug) == db.false(),
             )
         ).all()
 

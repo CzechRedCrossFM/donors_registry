@@ -1,8 +1,8 @@
 import re
 
-from sqlalchemy import collate
-from sqlalchemy.sql import text
+from sqlalchemy import case, func, select
 
+from registry.database import czech_order, timestamp_type
 from registry.extensions import db
 from registry.list.models import DonationCenter, Medals
 from registry.utils import (
@@ -18,7 +18,7 @@ class Batch(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     donation_center_id = db.Column(db.ForeignKey(DonationCenter.id))
     donation_center = db.relationship("DonationCenter")
-    imported_at = db.Column(db.DateTime, nullable=False)
+    imported_at = db.Column(timestamp_type, nullable=False)
 
     def __repr__(self):
         return f"<Batch({self.id}) from {self.imported_at}>"
@@ -29,13 +29,13 @@ class Record(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     batch_id = db.Column(db.ForeignKey(Batch.id, ondelete="CASCADE"), nullable=False)
     batch = db.relationship("Batch")
-    rodne_cislo = db.Column(db.String(10), index=True, nullable=False)
-    first_name = db.Column(db.String, nullable=False)
-    last_name = db.Column(db.String, nullable=False)
-    address = db.Column(db.String, nullable=False)
-    city = db.Column(db.String, nullable=False)
-    postal_code = db.Column(db.String(5), nullable=False)
-    kod_pojistovny = db.Column(db.String(3), nullable=False)
+    rodne_cislo = db.Column(db.Unicode(10), index=True, nullable=False)
+    first_name = db.Column(db.Unicode, nullable=False)
+    last_name = db.Column(db.Unicode, nullable=False)
+    address = db.Column(db.Unicode, nullable=False)
+    city = db.Column(db.Unicode, nullable=False)
+    postal_code = db.Column(db.Unicode(5), nullable=False)
+    kod_pojistovny = db.Column(db.Unicode(3), nullable=False)
     donation_count = db.Column(db.Integer, nullable=False)
 
     def __repr__(self):
@@ -56,21 +56,49 @@ class Record(db.Model):
         )
 
 
+def latest_donation_records(cutoff=None, rodne_cislo=None):
+    """Rank each donor's records by recency, both overall and per center."""
+    order = (Batch.imported_at.desc(), Record.donation_count.desc(), Record.id.desc())
+    query = (
+        select(
+            *Record.__table__.columns,
+            Batch.donation_center_id,
+            DonationCenter.slug,
+            func.row_number()
+            .over(
+                partition_by=(Record.rodne_cislo, Batch.donation_center_id),
+                order_by=order,
+            )
+            .label("center_rank"),
+            func.row_number()
+            .over(partition_by=Record.rodne_cislo, order_by=order)
+            .label("person_rank"),
+        )
+        .join(Batch, Batch.id == Record.batch_id)
+        .outerjoin(DonationCenter, DonationCenter.id == Batch.donation_center_id)
+    )
+    if cutoff is not None:
+        query = query.where(Batch.imported_at <= cutoff)
+    if rodne_cislo:
+        query = query.where(Record.rodne_cislo == rodne_cislo)
+    return query.subquery()
+
+
 class IgnoredDonors(db.Model):
     __tablename__ = "ignored_donors"
-    rodne_cislo = db.Column(db.String(10), primary_key=True)
-    reason = db.Column(db.String, nullable=False)
-    ignored_since = db.Column(db.DateTime, nullable=False)
+    rodne_cislo = db.Column(db.Unicode(10), primary_key=True)
+    reason = db.Column(db.Unicode, nullable=False)
+    ignored_since = db.Column(timestamp_type, nullable=False)
 
 
 class AwardedMedals(db.Model):
     __tablename__ = "awarded_medals"
-    rodne_cislo = db.Column(db.String(10), index=True, nullable=False)
+    rodne_cislo = db.Column(db.Unicode(10), index=True, nullable=False)
     medal_id = db.Column(db.ForeignKey(Medals.id))
     medal = db.relationship("Medals")
     # NULL means unknown data - imported from the old system
-    awarded_at = db.Column(db.DateTime, nullable=True)
-    __tableargs__ = (db.PrimaryKeyConstraint(rodne_cislo, medal_id),)
+    awarded_at = db.Column(timestamp_type, nullable=True)
+    __table_args__ = (db.PrimaryKeyConstraint("rodne_cislo", "medal_id"),)
 
 
 class AwardEligibilitySnapshot(db.Model):
@@ -85,8 +113,8 @@ class AwardEligibilitySnapshot(db.Model):
     medal_id = db.Column(db.ForeignKey(Medals.id), nullable=False)
     medal = db.relationship("Medals")
     year = db.Column(db.Integer, nullable=False)
-    rodne_cislo = db.Column(db.String(10), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False)
+    rodne_cislo = db.Column(db.Unicode(10), nullable=False)
+    created_at = db.Column(timestamp_type, nullable=False)
     __table_args__ = (db.PrimaryKeyConstraint("medal_id", "year", "rodne_cislo"),)
 
     @classmethod
@@ -106,8 +134,6 @@ class AwardEligibilitySnapshot(db.Model):
         """
         from datetime import datetime
 
-        from sqlalchemy import and_
-
         # Check if snapshot already exists for this medal/year
         existing = cls.query.filter_by(medal_id=medal.id, year=year).first()
         if existing:
@@ -117,92 +143,29 @@ class AwardEligibilitySnapshot(db.Model):
 
         # Cutoff date is now (when snapshot is created)
         cutoff_datetime = datetime.now()
-        cutoff_date = cutoff_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
-        # First, get currently eligible donors who haven't been awarded (optimization)
-        currently_eligible = DonorsOverview.query.filter(
-            and_(
+        latest = latest_donation_records(cutoff=cutoff_datetime)
+        eligible = (
+            select(latest.c.rodne_cislo)
+            .join(DonorsOverview, DonorsOverview.rodne_cislo == latest.c.rodne_cislo)
+            .where(
+                latest.c.center_rank == 1,
                 DonorsOverview.donation_count_total >= medal.minimum_donations,
-                getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(False),
+                getattr(DonorsOverview, "awarded_medal_" + medal.slug) == db.false(),
             )
-        ).all()
-
-        candidate_rodne_cisla = [d.rodne_cislo for d in currently_eligible]
-
-        if not candidate_rodne_cisla:
-            # No current candidates - insert marker and return 0
-            marker = cls(
-                medal_id=medal.id,
-                year=year,
-                rodne_cislo="__EMPTY__",
-                created_at=cutoff_datetime,
-            )
-            db.session.add(marker)
-            db.session.commit()
-            return 0
-
-        # Build IN clause with proper placeholders for SQLite
-        placeholders = ",".join([f":rc_{i}" for i in range(len(candidate_rodne_cisla))])
-
-        # Query to calculate historical donation counts for candidates
-        # Uses the same logic as donors_overview but with date filter
-        query = text(
-            f"""
-            SELECT "rodne_cislo"
-            FROM (
-                SELECT
-                    "outer_records"."rodne_cislo",
-                    (
-                        SELECT SUM("donation_count"."donation_count")
-                        FROM (
-                            SELECT (
-                                SELECT "records"."donation_count"
-                                FROM "records"
-                                    JOIN "batches"
-                                        ON "batches"."id" = "records"."batch_id"
-                                WHERE "records"."rodne_cislo" = "outer_records"."rodne_cislo"
-                                    AND "batches"."imported_at" <= :cutoff_date
-                                    AND (
-                                        "batches"."donation_center_id" = "donation_center_null"."donation_center_id"
-                                        OR (
-                                            "batches"."donation_center_id" IS NULL AND
-                                            "donation_center_null"."donation_center_id" IS NULL
-                                        )
-                                    )
-                                ORDER BY "batches"."imported_at" DESC,
-                                    "records"."donation_count" DESC
-                                LIMIT 1
-                            ) AS "donation_count"
-                            FROM (
-                                SELECT "donation_centers"."id" AS "donation_center_id"
-                                FROM "donation_centers"
-                                UNION
-                                SELECT NULL AS "donation_centers"
-                            ) AS "donation_center_null"
-                            WHERE "donation_count" IS NOT NULL
-                        ) AS "donation_count"
-                    ) AS historical_total
-                FROM (
-                    SELECT DISTINCT "rodne_cislo"
-                    FROM "records"
-                    WHERE "rodne_cislo" IN ({placeholders})
-                ) AS "outer_records"
-            ) AS results
-            WHERE historical_total >= :minimum_donations
-        """
+            .group_by(latest.c.rodne_cislo)
+            .having(func.sum(latest.c.donation_count) >= medal.minimum_donations)
         )
-
-        # Build parameters dict with individual rodne_cislo parameters
-        params = {
-            "cutoff_date": cutoff_date,
-            "minimum_donations": medal.minimum_donations,
-        }
-        for i, rc in enumerate(candidate_rodne_cisla):
-            params[f"rc_{i}"] = rc
-
-        result = db.session.execute(query, params)
-
-        eligible_rodne_cisla = [row[0] for row in result]
+        eligible_rodne_cisla = db.session.scalars(eligible).all()
+        if not eligible_rodne_cisla:
+            db.session.add(
+                cls(
+                    medal_id=medal.id,
+                    year=year,
+                    rodne_cislo="__EMPTY__",
+                    created_at=cutoff_datetime,
+                )
+            )
 
         # Store the snapshot
         for rodne_cislo in eligible_rodne_cisla:
@@ -239,13 +202,13 @@ class AwardEligibilitySnapshot(db.Model):
 
 class DonorsOverview(db.Model):
     __tablename__ = "donors_overview"
-    rodne_cislo = db.Column(db.String(10), primary_key=True)
-    first_name = db.Column(db.String, nullable=False)
-    last_name = db.Column(db.String, nullable=False)
-    address = db.Column(db.String, nullable=False)
-    city = db.Column(db.String, nullable=False)
-    postal_code = db.Column(db.String(5), nullable=False)
-    kod_pojistovny = db.Column(db.String(3), nullable=False)
+    rodne_cislo = db.Column(db.Unicode(10), primary_key=True)
+    first_name = db.Column(db.Unicode, nullable=False)
+    last_name = db.Column(db.Unicode, nullable=False)
+    address = db.Column(db.Unicode, nullable=False)
+    city = db.Column(db.Unicode, nullable=False)
+    postal_code = db.Column(db.Unicode(5), nullable=False)
+    kod_pojistovny = db.Column(db.Unicode(3), nullable=False)
     donation_count_fm = db.Column(db.Integer, nullable=False)
     donation_count_fm_bubenik = db.Column(db.Integer, nullable=False)
     donation_count_trinec = db.Column(db.Integer, nullable=False)
@@ -308,7 +271,7 @@ class DonorsOverview(db.Model):
         column_name = list(cls.frontend_column_names.keys())[column_id]
         if hasattr(cls, column_name):
             column = getattr(cls, column_name)
-            column_with_collation = collate(column, "czech")
+            column_with_collation = czech_order(column)
             return (getattr(column_with_collation, direction)(),)
         elif column_name == "donations":
             column_name = "donation_count_total"
@@ -389,297 +352,82 @@ class DonorsOverview(db.Model):
     @classmethod
     def refresh_overview(cls, rodne_cislo=None):
         if rodne_cislo:
-            row = db.session.get(cls, rodne_cislo)
-            if row is not None:
-                db.session.delete(row)
-            record = Record.query.filter(
-                Record.rodne_cislo == rodne_cislo
-            ).first_or_404()
-            # Thanks to the lines above, we know that it's safe to create this small
-            # part of the SQL query manually. Usually it's a bad idea due to possible
-            # SQL injection, but, we know that rodne_cislo is valid and exists in
-            # other parts of this database so it should be fine to use it like this.
-            sql_condition = "records.rodne_cislo = :rodne_cislo AND "
-            params = {"rodne_cislo": record.rodne_cislo}
+            Record.query.filter_by(rodne_cislo=rodne_cislo).first_or_404()
+            cls.query.filter_by(rodne_cislo=rodne_cislo).delete()
         else:
             cls.query.delete()
-            sql_condition = ""
-            params = {}
-        db.session.commit()
-        full_query = f"""INSERT INTO "donors_overview"
-    (
-        "rodne_cislo",
-        "first_name",
-        "last_name",
-        "address",
-        "city",
-        "postal_code",
-        "kod_pojistovny",
-        "donation_count_fm",
-        "donation_count_fm_bubenik",
-        "donation_count_trinec",
-        "donation_count_mp",
-        "donation_count_manual",
-        "donation_count_total",
-        "awarded_medal_br",
-        "awarded_medal_st",
-        "awarded_medal_zl",
-        "awarded_medal_kr3",
-        "awarded_medal_kr2",
-        "awarded_medal_kr1",
-        "awarded_medal_plk"
-    )
-SELECT
-    -- "rodne_cislo" uniquely identifies a person.
-    "records"."rodne_cislo",
-    -- Personal data from the person’s most recent batch
-    -- or from manual overrides.
-    COALESCE(
-        "donors_override"."first_name",
-        "records"."first_name"
-    ),
-    COALESCE(
-        "donors_override"."last_name",
-        "records"."last_name"
-    ),
-    COALESCE(
-        "donors_override"."address",
-        "records"."address"
-    ),
-    COALESCE(
-        "donors_override"."city",
-        "records"."city"
-    ),
-    COALESCE(
-        "donors_override"."postal_code",
-        "records"."postal_code"
-    ),
-    COALESCE(
-        "donors_override"."kod_pojistovny",
-        "records"."kod_pojistovny"
-    ),
-    -- Total donation counts for each donation center. The value in
-    -- a record is incremental. Thus retrieving the one from the most
-    -- recent batch that belongs to the donation center. Coalescing to
-    -- 0 for cases when there is no record from the donation center.
-    COALESCE(
-        (
-            SELECT "records"."donation_count"
-            FROM "records"
-                 JOIN "batches"
-                      ON "batches"."id" = "records"."batch_id"
-                 JOIN "donation_centers"
-                      ON "donation_centers"."id" = "batches"."donation_center_id"
-            WHERE "records"."rodne_cislo" = "recent_records"."rodne_cislo"
-                AND "donation_centers"."slug" = 'fm'
-            ORDER BY "batches"."imported_at" DESC,
-                "records"."donation_count" DESC
-            LIMIT 1
-        ),
-        0
-     ) AS "donation_count_fm",
-    COALESCE(
-        (
-            SELECT "records"."donation_count"
-            FROM "records"
-                 JOIN "batches"
-                      ON "batches"."id" = "records"."batch_id"
-                 JOIN "donation_centers"
-                      ON "donation_centers"."id" = "batches"."donation_center_id"
-            WHERE "records"."rodne_cislo" = "recent_records"."rodne_cislo"
-                AND "donation_centers"."slug" = 'fm_bubenik'
-            ORDER BY "batches"."imported_at" DESC,
-                "records"."donation_count" DESC
-            LIMIT 1
-        ),
-        0
-    ) AS "donation_count_fm_bubenik",
-    COALESCE(
-        (
-            SELECT "records"."donation_count"
-            FROM "records"
-                 JOIN "batches"
-                      ON "batches"."id" = "records"."batch_id"
-                 JOIN "donation_centers"
-                      ON "donation_centers"."id" = "batches"."donation_center_id"
-            WHERE "records"."rodne_cislo" = "recent_records"."rodne_cislo"
-                AND "donation_centers"."slug" = 'trinec'
-            ORDER BY "batches"."imported_at" DESC,
-                "records"."donation_count" DESC
-            LIMIT 1
-        ),
-        0
-    ) AS "donation_count_trinec",
-    COALESCE(
-        (
-            SELECT "records"."donation_count"
-            FROM "records"
-                 JOIN "batches"
-                      ON "batches"."id" = "records"."batch_id"
-                 JOIN "donation_centers"
-                      ON "donation_centers"."id" = "batches"."donation_center_id"
-            WHERE "records"."rodne_cislo" = "recent_records"."rodne_cislo"
-                AND "donation_centers"."slug" = 'mp'
-            ORDER BY "batches"."imported_at" DESC,
-                "records"."donation_count" DESC
-            LIMIT 1
-        ),
-        0
-    ) AS "donation_count_mp",
-    COALESCE(
-        (
-            SELECT "records"."donation_count"
-            FROM "records"
-                 JOIN "batches"
-                      ON "batches"."id" = "records"."batch_id"
-            WHERE "records"."rodne_cislo" = "recent_records"."rodne_cislo"
-                AND "batches"."donation_center_id" IS NULL
-            ORDER BY "batches"."imported_at" DESC,
-                "records"."donation_count" DESC
-            LIMIT 1
-        ),
-        0
-    ) AS "donation_count_manual",
-    -- The grand total of the donation counts. Sums the most recent
-    -- counts from all the donation centers and the most recent manual
-    -- donation count without a donation center. Not coalescing this
-    -- one, because it is not possible for a person not no have any
-    -- donation record at all.
-    (
-        -- Sum all the respective donation counts including manual
-        -- entries.
-        SELECT SUM("donation_count"."donation_count")
-        FROM (
-            SELECT (
-                -- Loads the most recent donation count for the
-                -- donation center.
-                SELECT "records"."donation_count"
-                FROM "records"
-                    JOIN "batches"
-                        ON "batches"."id" = "records"."batch_id"
-                WHERE "records"."rodne_cislo" = "recent_records"."rodne_cislo"
-                    AND (
-                        -- NULL values represent manual entries and
-                        -- cannot be compared by =.
-                        "batches"."donation_center_id" =
-                            "donation_center_null"."donation_center_id"
-                        OR (
-                            "batches"."donation_center_id" IS NULL AND
-                            "donation_center_null"."donation_center_id" IS NULL
-                        )
-                    )
-                ORDER BY "batches"."imported_at" DESC,
-                    "records"."donation_count" DESC
-                LIMIT 1
-            ) AS "donation_count"
-            FROM (
-                -- All possible donation centers including NULL
-                -- for manual entries.
-                SELECT "donation_centers"."id" AS "donation_center_id"
-                FROM "donation_centers"
-                UNION
-                SELECT NULL AS "donation_centers"
-            ) AS "donation_center_null"
-            -- Removes donation centers from which the person does
-            -- not have any records. This removes the need for
-            -- coalescing the value to 0 before summing.
-            WHERE "donation_count" IS NOT NULL
-        ) AS "donation_count"
-    ) AS "donation_count_total",
-    -- Awarded medals checks. Just simply query whether there is a
-    -- record for the given combination of "rodne_cislo" and "medal".
-    EXISTS(
-        SELECT 1
-        FROM "awarded_medals"
-            JOIN "medals"
-                ON "medals"."id" = "awarded_medals"."medal_id"
-        WHERE "awarded_medals"."rodne_cislo" = "records"."rodne_cislo"
-            AND "medals"."slug" = 'br'
-    ) AS "awarded_medal_br",
-    EXISTS(
-        SELECT 1
-        FROM "awarded_medals"
-            JOIN "medals"
-                ON "medals"."id" = "awarded_medals"."medal_id"
-        WHERE "awarded_medals"."rodne_cislo" = "records"."rodne_cislo"
-            AND "medals"."slug" = 'st'
-    ) AS "awarded_medal_st",
-    EXISTS(
-        SELECT 1
-        FROM "awarded_medals"
-            JOIN "medals"
-                ON "medals"."id" = "awarded_medals"."medal_id"
-        WHERE "awarded_medals"."rodne_cislo" = "records"."rodne_cislo"
-            AND "medals"."slug" = 'zl'
-    ) AS "awarded_medal_zl",
-    EXISTS(
-        SELECT 1
-        FROM "awarded_medals"
-            JOIN "medals"
-                ON "medals"."id" = "awarded_medals"."medal_id"
-        WHERE "awarded_medals"."rodne_cislo" = "records"."rodne_cislo"
-            AND "medals"."slug" = 'kr3'
-    ) AS "awarded_medal_kr3",
-    EXISTS(
-        SELECT 1
-        FROM "awarded_medals"
-            JOIN "medals"
-                ON "medals"."id" = "awarded_medals"."medal_id"
-        WHERE "awarded_medals"."rodne_cislo" = "records"."rodne_cislo"
-            AND "medals"."slug" = 'kr2'
-    ) AS "awarded_medal_kr2",
-    EXISTS(
-        SELECT 1
-        FROM "awarded_medals"
-            JOIN "medals"
-                ON "medals"."id" = "awarded_medals"."medal_id"
-        WHERE "awarded_medals"."rodne_cislo" = "records"."rodne_cislo"
-            AND "medals"."slug" = 'kr1'
-    ) AS "awarded_medal_kr1",
-    EXISTS(
-        SELECT 1
-        FROM "awarded_medals"
-            JOIN "medals"
-                ON "medals"."id" = "awarded_medals"."medal_id"
-        WHERE "awarded_medals"."rodne_cislo" = "records"."rodne_cislo"
-            AND "medals"."slug" = 'plk'
-    ) AS "awarded_medal_plk"
-FROM (
-    SELECT
-        "rodna_cisla"."rodne_cislo",
-        (
-            -- Looks up the most recently imported batch for a given
-            -- person, regardless of the donation center. This is used
-            -- only to link the most recent personal data as the
-            -- combination of "rodne_cislo" and "batch" is unique.
-            SELECT "records"."id"
-            FROM "records"
-                JOIN "batches"
-                    ON "batches"."id" = "records"."batch_id"
-            WHERE "records"."rodne_cislo" = "rodna_cisla"."rodne_cislo"
-            ORDER BY "batches"."imported_at" DESC,
-                "records"."donation_count" DESC
-            LIMIT 1
-        ) AS "record_id"
-    FROM (
-        -- The ultimate core. We need all people, not records or
-        -- batches. People are uniquely identified by their
-        -- "rodne_cislo".
-        SELECT DISTINCT "rodne_cislo"
-        FROM "records"
-        WHERE {sql_condition} "records"."rodne_cislo" NOT IN (
-            SELECT "rodne_cislo" FROM "ignored_donors"
-        )
-    ) AS "rodna_cisla"
-) AS "recent_records"
-    JOIN "records"
-        ON "records"."id" = "recent_records"."record_id"
-    LEFT JOIN "donors_override"
-        ON "donors_override"."rodne_cislo" = "records"."rodne_cislo";
-"""  # nosec
 
-        db.session.execute(text(full_query), params)
-        db.session.commit()
+        latest = latest_donation_records(rodne_cislo=rodne_cislo)
+        counts = [
+            func.sum(
+                case((latest.c.slug == slug, latest.c.donation_count), else_=0)
+            ).label("donation_count_" + slug)
+            for slug in ("fm", "fm_bubenik", "trinec", "mp")
+        ]
+        counts.append(
+            func.sum(
+                case(
+                    (latest.c.donation_center_id.is_(None), latest.c.donation_count),
+                    else_=0,
+                )
+            ).label("donation_count_manual")
+        )
+        counts.append(func.sum(latest.c.donation_count).label("donation_count_total"))
+        totals = (
+            select(latest.c.rodne_cislo, *counts)
+            .where(latest.c.center_rank == 1)
+            .group_by(latest.c.rodne_cislo)
+            .subquery()
+        )
+        personal_fields = [
+            "first_name",
+            "last_name",
+            "address",
+            "city",
+            "postal_code",
+            "kod_pojistovny",
+        ]
+        values = [latest.c.rodne_cislo]
+        values.extend(
+            func.coalesce(getattr(DonorsOverride, field), latest.c[field])
+            for field in personal_fields
+        )
+        values.extend(totals.c[column.name] for column in counts)
+        medal_fields = [
+            column.name
+            for column in cls.__table__.columns
+            if column.name.startswith("awarded_medal_")
+        ]
+        for field in medal_fields:
+            awarded = (
+                select(AwardedMedals.rodne_cislo)
+                .join(Medals)
+                .where(
+                    AwardedMedals.rodne_cislo == latest.c.rodne_cislo,
+                    Medals.slug == field.removeprefix("awarded_medal_"),
+                )
+                .exists()
+            )
+            values.append(case((awarded, True), else_=False))
+        query = (
+            select(*values)
+            .join(totals, totals.c.rodne_cislo == latest.c.rodne_cislo)
+            .outerjoin(
+                DonorsOverride, DonorsOverride.rodne_cislo == latest.c.rodne_cislo
+            )
+            .where(
+                latest.c.person_rank == 1,
+                ~latest.c.rodne_cislo.in_(select(IgnoredDonors.rodne_cislo)),
+            )
+        )
+        columns = [
+            "rodne_cislo",
+            *personal_fields,
+            *[column.name for column in counts],
+            *medal_fields,
+        ]
+        db.session.execute(cls.__table__.insert().from_select(columns, query))
+        db.session.flush()
 
         # Code moving degrees from last_name to first_name.
         if rodne_cislo:
@@ -707,8 +455,8 @@ FROM (
 
 class Note(db.Model):
     __tablename__ = "notes"
-    rodne_cislo = db.Column(db.String(10), primary_key=True)
-    note = db.Column(db.Text)
+    rodne_cislo = db.Column(db.Unicode(10), primary_key=True)
+    note = db.Column(db.UnicodeText)
 
     def __repr__(self):
         return f"<Note for {self.rodne_cislo}: {self.note}>"
@@ -732,13 +480,13 @@ class Note(db.Model):
 
 class DonorsOverride(db.Model):
     __tablename__ = "donors_override"
-    rodne_cislo = db.Column(db.String(10), primary_key=True)
-    first_name = db.Column(db.String)
-    last_name = db.Column(db.String)
-    address = db.Column(db.String)
-    city = db.Column(db.String)
-    postal_code = db.Column(db.String(5))
-    kod_pojistovny = db.Column(db.String(3))
+    rodne_cislo = db.Column(db.Unicode(10), primary_key=True)
+    first_name = db.Column(db.Unicode)
+    last_name = db.Column(db.Unicode)
+    address = db.Column(db.Unicode)
+    city = db.Column(db.Unicode)
+    postal_code = db.Column(db.Unicode(5))
+    kod_pojistovny = db.Column(db.Unicode(3))
 
     def to_dict(self):
         result = {}
@@ -756,13 +504,13 @@ class ContactImportLog(db.Model):
 
     __tablename__ = "contact_import_logs"
     id = db.Column(db.Integer, primary_key=True)
-    imported_at = db.Column(db.DateTime, nullable=False)
+    imported_at = db.Column(timestamp_type, nullable=False)
     imported_by_user_id = db.Column(
         db.Integer, db.ForeignKey("users.id"), nullable=False
     )
     imported_by_user = db.relationship("User")
-    filename = db.Column(db.String, nullable=True)  # Null if pasted directly
-    input_data = db.Column(db.Text, nullable=False)
+    filename = db.Column(db.Unicode, nullable=True)  # Null if pasted directly
+    input_data = db.Column(db.UnicodeText, nullable=False)
     processed_lines_count = db.Column(db.Integer, nullable=False)
     created_notes_count = db.Column(db.Integer, nullable=False, default=0)
     updated_notes_count = db.Column(db.Integer, nullable=False, default=0)

@@ -1,0 +1,5 @@
+# Azure Container Apps runtime, with the same application dependency pins.
+-r prod.txt
+gunicorn
+azure-identity
+azure-storage-blob

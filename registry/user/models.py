@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from flask_login import UserMixin
 
+from registry.database import timestamp_type
 from registry.extensions import bcrypt, db
 
 
@@ -13,13 +14,13 @@ class User(UserMixin, db.Model):
     __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(
-        db.String(80),
+        db.Unicode(80),
         unique=True,
         nullable=False,
     )
     password = db.Column(db.LargeBinary(128), nullable=False)
     created_at = db.Column(
-        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        timestamp_type, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
     active = db.Column(db.Boolean(), default=False)
 
