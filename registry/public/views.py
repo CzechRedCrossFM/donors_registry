@@ -47,12 +47,13 @@ def home(status_code=200):
             count = DonorsOverview.query.filter(
                 and_(
                     DonorsOverview.donation_count_total >= medal.minimum_donations,
-                    getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(False),
+                    getattr(DonorsOverview, "awarded_medal_" + medal.slug)
+                    == db.false(),
                 )
             ).count()
             awaiting[medal.slug] = count
             count = DonorsOverview.query.filter(
-                getattr(DonorsOverview, "awarded_medal_" + medal.slug).is_(True)
+                getattr(DonorsOverview, "awarded_medal_" + medal.slug) == db.true()
             ).count()
             awarded[medal.slug] = count
         return (

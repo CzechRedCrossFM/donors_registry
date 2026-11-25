@@ -8,8 +8,8 @@ from registry.extensions import db
 class DonationCenter(db.Model):
     __tablename__ = "donation_centers"
     id = db.Column(db.Integer, primary_key=True)
-    slug = db.Column(db.String, unique=True, nullable=False)
-    title = db.Column(db.String, nullable=False)
+    slug = db.Column(db.Unicode(32), unique=True, nullable=False)
+    title = db.Column(db.Unicode, nullable=False)
     import_increments = db.Column(
         db.Boolean, default=False, server_default=literal(False)
     )
@@ -22,11 +22,11 @@ class DonationCenter(db.Model):
 class Medals(db.Model):
     __tablename__ = "medals"
     id = db.Column(db.Integer, primary_key=True)
-    slug = db.Column(db.String, unique=True, nullable=False)
-    title = db.Column(db.String, nullable=False)
+    slug = db.Column(db.Unicode(32), unique=True, nullable=False)
+    title = db.Column(db.Unicode, nullable=False)
     minimum_donations = db.Column(db.Integer, nullable=False)
-    title_acc = db.Column(db.String, nullable=False)
-    title_instr = db.Column(db.String, nullable=False)
+    title_acc = db.Column(db.Unicode, nullable=False)
+    title_instr = db.Column(db.Unicode, nullable=False)
 
     def use_snapshot(self):
         return self.slug in ("kr3", "kr2", "kr1", "plk")

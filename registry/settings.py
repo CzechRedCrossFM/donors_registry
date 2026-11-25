@@ -11,12 +11,12 @@ from environs import Env
 env = Env()
 env.read_env()  # reads .env file first
 
-DEBUG = env.str("FLASK_DEBUG", default=None)
-SQLALCHEMY_DATABASE_URI = (
-    "sqlite:///database.sqlite" if DEBUG else env.str("DATABASE_URL")
-)
+DEBUG = env.bool("FLASK_DEBUG", default=False)
+SQLALCHEMY_DATABASE_URI = env.str("DATABASE_URL")
 SQLALCHEMY_ECHO = DEBUG
+SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "hide_parameters": not DEBUG}
 SECRET_KEY = "N0-s0-s3CrEt-d3fAulT-KeY" if DEBUG else env.str("SECRET_KEY")
+SESSION_COOKIE_SECURE = env.bool("SESSION_COOKIE_SECURE", default=False)
 BCRYPT_LOG_ROUNDS = env.int("BCRYPT_LOG_ROUNDS", default=13)
 DEBUG_TB_ENABLED = DEBUG
 DEBUG_TB_INTERCEPT_REDIRECTS = False

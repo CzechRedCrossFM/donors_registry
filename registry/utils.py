@@ -24,6 +24,15 @@ PHONE_RE = r"(?:\+420|00420)\s?[1-9]\d{2}\s?\d{3}\s?\d{3}|(?<!\d)[1-9]\d{2}\s?\d
 RC_RE = r"\b\d{6}/\d{3,4}\b|\b\d{9,10}\b"
 
 
+def database_id(value):
+    """Parse a positive SQL INT key before passing untrusted input to the driver."""
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return None
+    return value if 0 < value <= 2147483647 else None
+
+
 def capitalize(string):
     def get_replacement(match):
         word = match[0]

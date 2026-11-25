@@ -327,3 +327,22 @@ class TestUnit:
     )
     def test_is_valid_rc_negative(self, rc):
         assert not is_valid_rc(rc)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("1", 1),
+        (2147483647, 2147483647),
+        (None, None),
+        ("foo", None),
+        ("", None),
+        (0, None),
+        (-1, None),
+        (2147483648, None),
+    ],
+)
+def test_database_id_boundary(value, expected):
+    from registry.utils import database_id
+
+    assert database_id(value) == expected

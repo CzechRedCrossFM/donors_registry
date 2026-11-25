@@ -10,14 +10,9 @@ from flask.cli import with_appcontext
 
 from registry.donor.models import DonorsOverview, Note
 from registry.extensions import db
+from registry.list.seed import seed_reference_data
 from registry.user.models import User
 from registry.utils import EMAIL_RE
-from tests.utils import (
-    test_data_ignored,
-    test_data_medals,
-    test_data_overrides,
-    test_data_records,
-)
 
 
 @click.command()
@@ -32,14 +27,29 @@ def create_user(email, password):
     db.session.commit()
 
 
+@click.command("init-reference-data")
+@with_appcontext
+def init_reference_data():
+    """Initialize medal and donation-center lists without adding donor data."""
+    seed_reference_data()
+
+
 @click.command()
 @click.option("--limit", default=None)
 @with_appcontext
 def install_test_data(limit):
     """Install test data from files to database."""
+    from tests.utils import (
+        test_data_ignored,
+        test_data_medals,
+        test_data_overrides,
+        test_data_records,
+    )
+
     # Turn off SQLAlchemy logging (produces thousands of SQL queries)
     current_app.config["SQLALCHEMY_ECHO"] = False
 
+    seed_reference_data()
     test_data_records(db, limit=int(limit) if limit else None)
     test_data_medals(db)
     test_data_ignored(db)

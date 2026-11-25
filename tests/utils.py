@@ -202,7 +202,13 @@ def test_data_overrides(db, limit=25):
     fields = cycle(DonorsOverview.basic_fields)
 
     for index, record in tqdm(
-        enumerate(db.session.query(Record).group_by(Record.rodne_cislo).all()),
+        enumerate(
+            Record.query.filter(
+                Record.id.in_(
+                    db.select(db.func.min(Record.id)).group_by(Record.rodne_cislo)
+                )
+            ).all()
+        ),
         desc="Overrides for donors",
     ):
         if index > limit:

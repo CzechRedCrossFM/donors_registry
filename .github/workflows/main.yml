@@ -1,27 +1,90 @@
+name: Test application and production image
 on:
   push:
-    branches:
-    - master
+    branches: [master]
   pull_request:
-    branches:
-    - master
-
-name: Run Tox tests
-
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
-  tox_test:
-    name: Tox test
+  lint:
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v3
-    - name: Run Tox tests
-      id: test
-      uses: fedora-python/tox-github-action@main
-      with:
-        tox_env: ${{ matrix.tox_env }}
-        dnf_install: pkgconfig(libffi) glibc-langpack-cs libicu-devel sqlite-devel pango
-    strategy:
-      matrix:
-        tox_env: [py313, lint]
-
-    # Use GitHub's Linux Docker host
-    runs-on: ubuntu-latest
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install tox
+      - run: tox -e lint
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      sql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: 'Y'
+          MSSQL_PID: Developer
+          MSSQL_SA_PASSWORD: Only_for_CI_42!
+        ports:
+          - 1433:1433
+    env:
+      DONORS_TEST_SERVER_URL: mssql+pyodbc://sa:Only_for_CI_42!@localhost:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+      DATABASE_URL: mssql+pyodbc://sa:Only_for_CI_42!@localhost:1433/donors_image_test?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install native dependencies
+        run: |
+          curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb -o /tmp/microsoft.deb
+          sudo dpkg -i /tmp/microsoft.deb
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 locales libpango-1.0-0 libpangoft2-1.0-0
+          sudo locale-gen cs_CZ.UTF-8
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements/dev.txt -r requirements/azure.txt
+      - name: Wait for disposable SQL Server
+        run: |
+          python - <<'PY'
+          import os, time
+          from sqlalchemy import create_engine
+          from sqlalchemy.exc import SQLAlchemyError
+          engine = create_engine(os.environ['DONORS_TEST_SERVER_URL'], isolation_level='AUTOCOMMIT', connect_args={'timeout': 2})
+          for attempt in range(60):
+              try:
+                  with engine.connect() as connection:
+                      connection.exec_driver_sql('CREATE DATABASE donors_image_test COLLATE Czech_100_CI_AS_SC_UTF8')
+                  break
+              except SQLAlchemyError:
+                  if attempt == 59:
+                      raise
+                  time.sleep(1)
+          engine.dispose()
+          PY
+      - name: Run complete MSSQL suite and coverage
+        run: |
+          coverage run -m pytest -q tests/
+          coverage report
+      - name: Build production image
+        run: docker build -t donors-check .
+      - name: Check production container with MSSQL
+        run: |
+          docker run -d --name donors-check --network host \
+            -e DATABASE_URL -e SECRET_KEY=only-for-ci \
+            -e SMTP_SERVER=example.invalid -e SMTP_PORT=587 \
+            -e SMTP_LOGIN=test -e SMTP_PASSWORD=test \
+            -e EMAIL_SENDER=test@example.invalid donors-check
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/healthz; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8000/healthz
+          docker exec donors-check flask db upgrade
+          curl -fsS http://localhost:8000/readyz
+          curl -fsS http://localhost:8000/ > /dev/null
+      - name: Container logs
+        if: failure()
+        run: docker logs donors-check || true

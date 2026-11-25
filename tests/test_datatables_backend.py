@@ -63,13 +63,13 @@ class TestDataTablesBackend:
 
     def test_json_backend_search_by_note(self, user, testapp):
         note_text = "FooBarBaz note special text"
-        while True:
-            first_rodne_cislo, second_rodne_cislo = sample_of_rc(2)
-            if not (
-                db.session.get(IgnoredDonors, first_rodne_cislo)
-                or db.session.get(IgnoredDonors, second_rodne_cislo)
-            ):
-                break
+        first_rodne_cislo, second_rodne_cislo = (
+            donor.rodne_cislo
+            for donor in DonorsOverview.query.outerjoin(DonorsOverview.note)
+            .filter(Note.rodne_cislo.is_(None))
+            .order_by(DonorsOverview.rodne_cislo)
+            .limit(2)
+        )
 
         note = Note(rodne_cislo=first_rodne_cislo, note=note_text)
         db.session.add(note)
@@ -289,6 +289,7 @@ class TestDataTablesBackend:
 
     @pytest.mark.parametrize("direction", ("asc", "desc"))
     def test_json_backend_order_by_utf_8(self, user, testapp, direction):
+        locale.setlocale(locale.LC_COLLATE, "cs_CZ.utf8")
         params = {
             "draw": "1",
             "order[0][column]": list(DonorsOverview.frontend_column_names.keys()).index(

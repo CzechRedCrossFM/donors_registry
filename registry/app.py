@@ -5,8 +5,12 @@ import sys
 from random import choice
 
 from flask import Flask, flash, redirect, url_for
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
 
-from registry import batch, commands, donor, public, user
+from registry import batch, commands, donor, public, transfer, user
+from registry.database import configure_sql_auth
 from registry.extensions import (
     bcrypt,
     csrf_protect,
@@ -30,6 +34,19 @@ def create_app(config_object="registry.settings"):
     register_blueprints(app)
     register_commands(app)
     configure_logger(app)
+
+    @app.get("/healthz")
+    def health():
+        return "ok", 200
+
+    @app.get("/readyz")
+    def ready():
+        try:
+            with db.engine.connect() as connection:
+                connection.execute(text("SELECT 1 FROM alembic_version"))
+        except SQLAlchemyError:
+            return "not ready", 503
+        return "ok", 200
 
     @app.errorhandler(404)
     def page_not_found(e):
@@ -75,10 +92,14 @@ def create_app(config_object="registry.settings"):
 
 def register_extensions(app):
     """Register Flask extensions."""
+    if make_url(app.config["SQLALCHEMY_DATABASE_URI"]).drivername != "mssql+pyodbc":
+        raise ValueError("Only MSSQL is supported; use a mssql+pyodbc DATABASE_URL.")
     bcrypt.init_app(app)
     db.init_app(app)
     csrf_protect.init_app(app)
     login_manager.init_app(app)
+    with app.app_context():
+        configure_sql_auth(db.engine)
     migrate.init_app(app, db)
     if app.debug:
         from flask_debugtoolbar import DebugToolbarExtension
@@ -100,9 +121,12 @@ def register_blueprints(app):
 def register_commands(app):
     """Register Click commands."""
     app.cli.add_command(commands.create_user)
+    app.cli.add_command(commands.init_reference_data)
     app.cli.add_command(commands.install_test_data)
     app.cli.add_command(commands.refresh_overview)
     app.cli.add_command(commands.import_emails)
+    app.cli.add_command(transfer.restore_database)
+    app.cli.add_command(transfer.backup_database)
 
 
 def configure_logger(app):
