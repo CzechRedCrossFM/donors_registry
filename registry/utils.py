@@ -287,7 +287,7 @@ def send_email_with_award_doc(to, award_doc_content, medal, config):
         filename="Potvrzení o udělení medaile.pdf",
     )
 
-    with smtplib.SMTP(config["SMTP_SERVER"], config["SMTP_PORT"]) as server:
+    with smtplib.SMTP(config["SMTP_SERVER"], config["SMTP_PORT"], timeout=20) as server:
         server.starttls()
         server.login(config["SMTP_LOGIN"], config["SMTP_PASSWORD"])
         server.send_message(msg)
