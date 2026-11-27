@@ -71,6 +71,7 @@ class TestDataTablesBackend:
             ):
                 break
 
+        delete_note_if_exists(first_rodne_cislo)
         note = Note(rodne_cislo=first_rodne_cislo, note=note_text)
         db.session.add(note)
         db.session.commit()
@@ -94,6 +95,7 @@ class TestDataTablesBackend:
         assert res.json["data"][0]["note"]["emails"] == []
         assert res.json["data"][0]["note"]["phones"] == []
 
+        delete_note_if_exists(second_rodne_cislo)
         note = Note(rodne_cislo=second_rodne_cislo, note=note_text)
         db.session.add(note)
         db.session.commit()

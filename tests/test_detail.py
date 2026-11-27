@@ -1,7 +1,7 @@
 import re
 from datetime import datetime, timedelta
+from io import BytesIO
 from math import ceil
-from tempfile import NamedTemporaryFile
 
 import pytest
 from flask import url_for
@@ -585,9 +585,7 @@ class TestAwardPrepExport:
         login(user, testapp)
         page = testapp.get(url_for("donor.award_prep", medal_slug=medal.slug))
         table_data = page.click(description="Stáhnout tabulku pro odběrná místa").body
-        with NamedTemporaryFile(suffix=".xlsx") as tmp:
-            tmp.write(table_data)
-            workbook = load_workbook(tmp.name)
+        workbook = load_workbook(BytesIO(table_data))
 
         for sheetname in workbook.sheetnames:
             assert "roztridit" == sheetname or sheetname in dc_names
